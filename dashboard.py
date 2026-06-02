@@ -33,15 +33,39 @@ def parse_and_merge(af_frames, ch_frames):
     return af, ch, merged
 
 
+GITHUB_RAW = "https://raw.githubusercontent.com/sjbyun-pixel/marketing-dashboard/master/marketing_data"
+
+
 @st.cache_data(ttl=300)
 def load_data(data_dir):
-    af_files = glob.glob(os.path.join(data_dir, "marketing_data", "appsflyer", "*.csv"))
-    ch_files = glob.glob(os.path.join(data_dir, "marketing_data", "channel", "*.csv"))
-    if not af_files or not ch_files:
+    # 로컬 폴더 우선
+    af_local = glob.glob(os.path.join(data_dir, "marketing_data", "appsflyer", "*.csv"))
+    ch_local = glob.glob(os.path.join(data_dir, "marketing_data", "channel", "*.csv"))
+    if af_local and ch_local:
+        return parse_and_merge(
+            [pd.read_csv(f) for f in af_local],
+            [pd.read_csv(f) for f in ch_local]
+        )
+
+    # GitHub에서 파일 목록 조회 후 로드
+    import requests
+    def list_github_files(folder):
+        api = f"https://api.github.com/repos/sjbyun-pixel/marketing-dashboard/contents/marketing_data/{folder}"
+        r = requests.get(api, timeout=10)
+        if r.status_code != 200:
+            return []
+        return [f["download_url"] for f in r.json() if f["name"].endswith(".csv")]
+
+    af_urls = list_github_files("appsflyer")
+    ch_urls = list_github_files("channel")
+
+    if not af_urls or not ch_urls:
         return None, None, None
-    af_frames = [pd.read_csv(f) for f in af_files]
-    ch_frames = [pd.read_csv(f) for f in ch_files]
-    return parse_and_merge(af_frames, ch_frames)
+
+    return parse_and_merge(
+        [pd.read_csv(u) for u in af_urls],
+        [pd.read_csv(u) for u in ch_urls]
+    )
 
 
 def calc_metrics(d, purchase_col, revenue_col):
@@ -74,36 +98,10 @@ def agg_channel(d):
 # ── 로컬 폴더 자동 로드 시도
 af, ch, df = load_data(DATA_DIR)
 
-# ── 로컬 데이터 없으면 업로드 UI 표시
 if df is None:
     st.title("마케팅 성과 대시보드")
-    st.info("로컬 데이터 폴더를 찾을 수 없습니다. CSV 파일을 직접 업로드하세요.")
-
-    with st.expander("파일 업로드", expanded=True):
-        col_u1, col_u2 = st.columns(2)
-        with col_u1:
-            ch_files = st.file_uploader(
-                "채널 데이터 (YYYY-MM-DD_channel.csv)",
-                type="csv", accept_multiple_files=True, key="ch_upload"
-            )
-        with col_u2:
-            af_files = st.file_uploader(
-                "앱스플라이어 데이터 (YYYY-MM-DD_appsflyer.csv)",
-                type="csv", accept_multiple_files=True, key="af_upload"
-            )
-
-    if ch_files and af_files:
-        try:
-            ch_frames = [pd.read_csv(f) for f in ch_files]
-            af_frames = [pd.read_csv(f) for f in af_files]
-            af, ch, df = parse_and_merge(af_frames, ch_frames)
-            st.success(f"채널 {len(ch_files)}개, 앱스플라이어 {len(af_files)}개 파일 로드 완료")
-        except Exception as e:
-            st.error(f"파일 파싱 오류: {e}")
-            st.stop()
-    else:
-        st.caption("채널 데이터와 앱스플라이어 데이터를 모두 업로드해야 대시보드가 표시됩니다.")
-        st.stop()
+    st.error("데이터가 없습니다. update_data.bat 을 실행해서 데이터를 업로드해주세요.")
+    st.stop()
 
 # ── 사이드바
 st.sidebar.header("필터")
