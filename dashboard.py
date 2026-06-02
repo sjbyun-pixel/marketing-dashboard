@@ -12,33 +12,36 @@ CHANNEL_DIR = os.path.join(DATA_DIR, "marketing_data", "channel")
 AF_DIR = os.path.join(DATA_DIR, "marketing_data", "appsflyer")
 
 
+AF_COLS = {"일": "date", "미디어소스": "media_source", "캠페인": "campaign",
+           "그룹": "adgroup", "소재": "creative", "클릭": "af_click",
+           "회원가입": "af_signup", "구매": "af_purchase", "구매매출": "af_revenue"}
+CH_COLS = {"일": "date", "채널": "channel", "채널분류": "channel_type",
+           "캠페인": "campaign", "캠페인목적": "campaign_goal",
+           "그룹": "adgroup", "소재": "creative", "노출": "impression",
+           "클릭": "ch_click", "비용": "cost", "회원가입": "ch_signup",
+           "구매": "ch_purchase", "구매매출": "ch_revenue"}
+
+
+def parse_and_merge(af_frames, ch_frames):
+    af = pd.concat(af_frames, ignore_index=True).rename(columns=AF_COLS)
+    ch = pd.concat(ch_frames, ignore_index=True).rename(columns=CH_COLS)
+    merged = ch.merge(
+        af[["date", "campaign", "adgroup", "creative", "af_signup", "af_purchase", "af_revenue"]],
+        on=["date", "campaign", "adgroup", "creative"], how="left"
+    )
+    merged["date"] = pd.to_datetime(merged["date"])
+    return af, ch, merged
+
+
 @st.cache_data(ttl=300)
 def load_data(data_dir):
     af_files = glob.glob(os.path.join(data_dir, "marketing_data", "appsflyer", "*.csv"))
     ch_files = glob.glob(os.path.join(data_dir, "marketing_data", "channel", "*.csv"))
     if not af_files or not ch_files:
         return None, None, None
-    af = pd.concat([pd.read_csv(f) for f in af_files], ignore_index=True)
-    ch = pd.concat([pd.read_csv(f) for f in ch_files], ignore_index=True)
-    af = af.rename(columns={
-        "일": "date", "미디어소스": "media_source", "캠페인": "campaign",
-        "그룹": "adgroup", "소재": "creative", "클릭": "af_click",
-        "회원가입": "af_signup", "구매": "af_purchase", "구매매출": "af_revenue"
-    })
-    ch = ch.rename(columns={
-        "일": "date", "채널": "channel", "채널분류": "channel_type",
-        "캠페인": "campaign", "캠페인목적": "campaign_goal",
-        "그룹": "adgroup", "소재": "creative", "노출": "impression",
-        "클릭": "ch_click", "비용": "cost", "회원가입": "ch_signup",
-        "구매": "ch_purchase", "구매매출": "ch_revenue"
-    })
-    merged = ch.merge(
-        af[["date", "campaign", "adgroup", "creative", "af_signup", "af_purchase", "af_revenue"]],
-        on=["date", "campaign", "adgroup", "creative"],
-        how="left"
-    )
-    merged["date"] = pd.to_datetime(merged["date"])
-    return af, ch, merged
+    af_frames = [pd.read_csv(f) for f in af_files]
+    ch_frames = [pd.read_csv(f) for f in ch_files]
+    return parse_and_merge(af_frames, ch_frames)
 
 
 def calc_metrics(d, purchase_col, revenue_col):
@@ -68,10 +71,39 @@ def agg_channel(d):
 
 
 # ── 데이터 로드
+# ── 로컬 폴더 자동 로드 시도
 af, ch, df = load_data(DATA_DIR)
+
+# ── 로컬 데이터 없으면 업로드 UI 표시
 if df is None:
-    st.error(f"CSV 파일 없음. marketing_data/channel, marketing_data/appsflyer 폴더 확인.")
-    st.stop()
+    st.title("마케팅 성과 대시보드")
+    st.info("로컬 데이터 폴더를 찾을 수 없습니다. CSV 파일을 직접 업로드하세요.")
+
+    with st.expander("파일 업로드", expanded=True):
+        col_u1, col_u2 = st.columns(2)
+        with col_u1:
+            ch_files = st.file_uploader(
+                "채널 데이터 (YYYY-MM-DD_channel.csv)",
+                type="csv", accept_multiple_files=True, key="ch_upload"
+            )
+        with col_u2:
+            af_files = st.file_uploader(
+                "앱스플라이어 데이터 (YYYY-MM-DD_appsflyer.csv)",
+                type="csv", accept_multiple_files=True, key="af_upload"
+            )
+
+    if ch_files and af_files:
+        try:
+            ch_frames = [pd.read_csv(f) for f in ch_files]
+            af_frames = [pd.read_csv(f) for f in af_files]
+            af, ch, df = parse_and_merge(af_frames, ch_frames)
+            st.success(f"채널 {len(ch_files)}개, 앱스플라이어 {len(af_files)}개 파일 로드 완료")
+        except Exception as e:
+            st.error(f"파일 파싱 오류: {e}")
+            st.stop()
+    else:
+        st.caption("채널 데이터와 앱스플라이어 데이터를 모두 업로드해야 대시보드가 표시됩니다.")
+        st.stop()
 
 # ── 사이드바
 st.sidebar.header("필터")
